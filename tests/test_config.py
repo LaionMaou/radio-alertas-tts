@@ -150,14 +150,29 @@ def test_invalid_voice_rejected(tmp_path) -> None:
         )
 
 
-def test_lead_in_defaults_and_can_be_disabled(tmp_path) -> None:
+def test_lead_in_defaults_to_three_seconds_and_can_be_disabled(tmp_path) -> None:
     default = load_config({"DRY_RUN": "true", "DATA_DIR": str(tmp_path)})
-    assert default.lead_in_seconds == 5.0
+    assert default.lead_in_seconds == 3.0
 
     disabled = load_config(
         {"DRY_RUN": "true", "LEAD_IN_SECONDS": "0", "DATA_DIR": str(tmp_path)}
     )
     assert disabled.lead_in_seconds == 0.0
+
+
+def test_loop_gap_defaults_and_is_validated(tmp_path) -> None:
+    default = load_config({"DRY_RUN": "true", "DATA_DIR": str(tmp_path)})
+    assert default.loop_gap_seconds == 2.0
+
+    custom = load_config(
+        {"DRY_RUN": "true", "LOOP_GAP_SECONDS": "0", "DATA_DIR": str(tmp_path)}
+    )
+    assert custom.loop_gap_seconds == 0.0
+
+    with pytest.raises(ConfigError, match="LOOP_GAP_SECONDS"):
+        load_config(
+            {"DRY_RUN": "true", "LOOP_GAP_SECONDS": "11", "DATA_DIR": str(tmp_path)}
+        )
 
 
 def test_chime_is_on_by_default_and_can_be_disabled(tmp_path) -> None:

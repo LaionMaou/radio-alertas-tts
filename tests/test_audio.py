@@ -4,14 +4,17 @@ from pathlib import Path
 
 from radio_alerts_tts.audio import (
     BED_LEVEL,
-    CHIME_LEVEL,
-    CHIME_SECONDS,
+    URGENT_LEVELS,
     add_lead_in,
     bed_source,
+    build_loop_list,
+    build_loop_wav,
     build_pad_args,
     build_webm_args,
-    chime_source,
+    build_webm_loop_args,
     gain_filter,
+    lead_in_source,
+    urgent_source,
 )
 
 WAV = Path("alert.wav")
@@ -48,11 +51,11 @@ def test_add_lead_in_is_a_noop_without_seconds() -> None:
     assert add_lead_in(WAV, 0.0, Path("lead.wav")) == WAV
 
 
-def test_pad_args_prepend_real_silence_when_the_chime_is_off() -> None:
-    args = build_pad_args(WAV, 5.0, Path("lead.wav"))
+def test_pad_args_prepend_real_silence_when_the_sound_is_off() -> None:
+    args = build_pad_args(WAV, 3.0, Path("lead.wav"), sound=False)
     joined = " ".join(args)
 
-    assert args[args.index("-t") + 1] == "5"
+    assert args[args.index("-t") + 1] == "3"
     assert "anullsrc=r=48000:cl=mono" in args
     assert "concat=n=2:v=0:a=1" in joined
     assert args[-1] == "lead.wav"
@@ -61,21 +64,79 @@ def test_pad_args_prepend_real_silence_when_the_chime_is_off() -> None:
     )
 
 
-def test_pad_args_fill_the_head_with_the_bed_and_end_with_the_chime() -> None:
-    args = build_pad_args(WAV, 5.0, Path("lead.wav"), chime=True)
-    graph = args[args.index("-filter_complex") + 1]
+def test_soft_lead_is_the_low_bed() -> None:
+    args = build_pad_args(WAV, 3.0, Path("lead.wav"), tone="soft", sound=True)
     joined = " ".join(args)
 
-    assert bed_source(5.0) in args
-    assert chime_source() in args
+    assert bed_source(3.0) in args
+    assert urgent_source(3.0) not in args
     assert "anullsrc" not in joined, (
         "el arranque no puede ser silencio: si la conmutación llega antes, esos "
         "segundos se transmiten como aire muerto"
     )
-    assert "concat=n=3:v=0:a=1" in graph
-    assert "[a0][a1][a2]concat" in graph, (
-        "orden: cama (0), pings fuertes (1), anuncio (2); si los pings van "
-        "primero la conmutación de Liquidsoap se los come"
+    assert args[args.index("-filter_complex") + 1].endswith(
+        "[a0][a1]concat=n=2:v=0:a=1[a]"
     )
-    assert BED_LEVEL < CHIME_LEVEL
-    assert CHIME_SECONDS == 2.0
+
+
+def test_urgent_lead_is_strident_for_seven_or_more() -> None:
+    args = build_pad_args(WAV, 3.0, Path("lead.wav"), tone="urgent", sound=True)
+
+    assert urgent_source(3.0) in args
+    assert bed_source(3.0) not in args
+    assert len(URGENT_LEVELS) == 2
+    assert max(URGENT_LEVELS) > BED_LEVEL
+
+
+def test_lead_in_source_picks_the_tone() -> None:
+    assert lead_in_source(3.0, "soft") == bed_source(3.0)
+    assert lead_in_source(3.0, "urgent") == urgent_source(3.0)
+    assert lead_in_source(3.0, "desconocido") == bed_source(3.0)
+
+
+def test_loop_wav_is_speech_plus_a_gap(tmp_path, monkeypatch) -> None:
+    captured: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        captured.append(args)
+
+        class Result:
+            returncode = 0
+            stderr = b""
+
+        return Result()
+
+    monkeypatch.setattr("radio_alerts_tts.audio.subprocess.run", fake_run)
+
+    output = Path("loop.wav")
+    assert build_loop_wav(WAV, output, 2.0) == output
+
+    args = captured[0]
+    assert args[args.index("-t") + 1] == "2"
+    assert "anullsrc=r=48000:cl=mono" in args
+    assert args[args.index("-filter_complex") + 1].endswith(
+        "[a0][a1]concat=n=2:v=0:a=1[a]"
+    )
+    assert "pcm_s16le" in args
+
+
+def test_loop_list_starts_with_the_head_and_repeats_the_body(tmp_path) -> None:
+    listing = build_loop_list(Path("lead.wav"), Path("loop.wav"), tmp_path / "l", 3)
+
+    lines = listing.read_text(encoding="utf-8").splitlines()
+
+    assert lines[0] == "ffconcat version 1.0"
+    assert lines[1] == "file 'lead.wav'"
+    assert lines[2:] == ["file 'loop.wav'"] * 3
+
+
+def test_loop_webm_is_one_paced_container() -> None:
+    args = build_webm_loop_args(Path("loop.ffconcat"), "32k", 0.0, "pipe:1")
+
+    assert args[args.index("-f") + 1] == "concat"
+    assert args[args.index("-i") + 1] == "loop.ffconcat"
+    assert "-stream_loop" not in args, (
+        "el filtro concat con -stream_loop reinicia -re y acelera el audio"
+    )
+    assert args.count("-re") == 1
+    assert args[-1] == "pipe:1"

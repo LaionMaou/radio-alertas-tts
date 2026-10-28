@@ -20,6 +20,8 @@ KIND_LABELS = {
     "other": "Aviso",
 }
 
+VALID_TONES = frozenset({"soft", "urgent"})
+
 
 def new_alert_id() -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -33,6 +35,9 @@ class AlertRequest:
     magnitude: float | None = None
     title: str = ""
     dedupe_key: str = ""
+    tone: str = "soft"
+    loop: bool = False
+    preempt: bool = False
     source: str = "api"
     id: str = field(default_factory=new_alert_id)
 

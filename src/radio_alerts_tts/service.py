@@ -19,9 +19,20 @@ from . import __version__, audio, icecast, notifier, tts, webdj
 from .config import VALID_KINDS, Config
 from .errors import AudioError, TransportError
 from .logging_setup import log_event
-from .models import KIND_TITLES, AlertRequest, AlertResult, SubmitOutcome
+from .models import KIND_TITLES, VALID_TONES, AlertRequest, AlertResult, SubmitOutcome
 
 ProcessFn = Callable[[AlertRequest], AlertResult]
+
+
+class _ActiveStream:
+    """Stream en curso y por qué se cortó: stop del operador o preempción."""
+
+    def __init__(self) -> None:
+        self.stop = threading.Event()
+        self.reason = "stopped"
+
+
+LOOP_MAX_SECONDS = 24 * 3600
 
 
 def _now_iso() -> str:
@@ -49,6 +60,7 @@ class AlertService:
         self._state_lock = threading.Lock()
         self._dedupe: dict[str, tuple[str, float]] = {}
         self._busy = False
+        self._active: _ActiveStream | None = None
         self._last: AlertResult | None = None
         self._results: OrderedDict[str, AlertResult] = OrderedDict()
         self._results_limit = 200
@@ -75,6 +87,7 @@ class AlertService:
             ).start()
 
     def stop(self) -> None:
+        self.stop_active()
         self._stop.set()
         try:
             self._queue.put_nowait(None)
@@ -91,8 +104,28 @@ class AlertService:
         if self._thread is not None:
             self._thread.join(timeout=5)
 
+    def stop_active(self, *, reason: str = "stopped") -> bool:
+        """Corta el stream en curso; el AutoDJ retoma al cerrarse el socket."""
+        with self._state_lock:
+            active = self._active
+        if active is None:
+            return False
+        active.reason = reason
+        active.stop.set()
+        log_event(
+            self.log,
+            logging.INFO,
+            "alert.stop_requested",
+            "Corte del stream en curso",
+            reason=reason,
+        )
+        return True
+
     def submit(self, alert: AlertRequest) -> SubmitOutcome:
         self._validate(alert)
+
+        if alert.preempt:
+            self.stop_active(reason="preempted")
 
         with self._submit_lock:
             duplicate = self._find_duplicate(alert)
@@ -262,6 +295,9 @@ class AlertService:
             chars=len(alert.text),
             text=alert.text,
             source=alert.source,
+            tone=alert.tone,
+            loop=alert.loop,
+            preempt=alert.preempt,
         )
 
         try:
@@ -308,11 +344,19 @@ class AlertService:
                 )
             else:
                 stream_wav = self._with_lead_in(alert, wav_path, alert_dir)
+                active = _ActiveStream()
+                with self._state_lock:
+                    self._active = active
                 t0 = time.perf_counter()
-                transport = self._stream(alert, stream_wav, webm_path, audio_seconds)
+                transport = self._stream(
+                    alert, stream_wav, webm_path, audio_seconds, active
+                )
                 stream_seconds = time.perf_counter() - t0
                 sent_audio = True
-                status = "ok"
+                if active.stop.is_set() or (alert.loop and self._queue.qsize() > 0):
+                    status = "stopped" if active.reason == "stopped" else "partial"
+                else:
+                    status = "ok"
         except TransportError as exc:
             error = str(exc)
             sent_audio = exc.sent_audio
@@ -339,6 +383,7 @@ class AlertService:
         finally:
             with self._state_lock:
                 self._busy = False
+                self._active = None
 
         if status in ("failed", "dry-run") and alert.dedupe_key:
             self._forget_dedupe(alert.dedupe_key)
@@ -380,7 +425,7 @@ class AlertService:
 
         log_event(
             self.log,
-            logging.INFO if status in ("ok", "dry-run") else logging.ERROR,
+            logging.INFO if status in ("ok", "dry-run", "stopped") else logging.ERROR,
             "alert.completed",
             "Alerta procesada",
             alert_id=alert.id,
@@ -404,7 +449,8 @@ class AlertService:
                 wav_path,
                 seconds,
                 alert_dir / "alert-lead.wav",
-                chime=self.config.chime_enabled,
+                tone=alert.tone,
+                sound=self.config.chime_enabled,
             )
         except AudioError as exc:
             log_event(
@@ -423,7 +469,30 @@ class AlertService:
         wav_path: Path,
         webm_path: Path,
         audio_seconds: float,
+        active: _ActiveStream,
     ) -> str:
+        loop = self._build_loop(alert, wav_path, webm_path)
+        if loop is not None:
+            loop_list, body_seconds = loop
+            log_event(
+                self.log,
+                logging.WARNING,
+                "alert.loop_started",
+                "Alerta en bucle hasta que se detenga",
+                alert_id=alert.id,
+                kind=alert.kind,
+                max_hours=round(LOOP_MAX_SECONDS / 3600),
+                stop_command="docker compose exec alerts-tts python -m radio_alerts_tts.cli stop",
+            )
+            self._watch_loop(alert, body_seconds, active)
+        else:
+            loop_list = None
+
+        def should_stop() -> bool:
+            if active.stop.is_set():
+                return True
+            return alert.loop and self._queue.qsize() > 0
+
         order = [self.config.transport]
         if self.config.enable_icecast_fallback:
             order.append("icecast" if self.config.transport == "webdj" else "webdj")
@@ -439,11 +508,21 @@ class AlertService:
 
                     def chunks():
                         with open(webm_path, "wb") as handle:
-                            for chunk in audio.iter_webm_chunks(
-                                wav_path,
-                                bitrate=self.config.audio_bitrate,
-                                gain_db=self.config.audio_gain_db,
-                            ):
+                            if loop_list is not None:
+                                source = audio.iter_webm_loop_chunks(
+                                    loop_list,
+                                    bitrate=self.config.audio_bitrate,
+                                    gain_db=self.config.audio_gain_db,
+                                    should_stop=should_stop,
+                                )
+                            else:
+                                source = audio.iter_webm_chunks(
+                                    wav_path,
+                                    bitrate=self.config.audio_bitrate,
+                                    gain_db=self.config.audio_gain_db,
+                                    should_stop=should_stop,
+                                )
+                            for chunk in source:
                                 handle.write(chunk)
                                 yield chunk
 
@@ -457,7 +536,9 @@ class AlertService:
                     icecast.stream(
                         wav_path,
                         self.config,
-                        timeout_seconds=audio_seconds + 60,
+                        timeout_seconds=0 if loop_list is not None else audio_seconds + 60,
+                        should_stop=should_stop,
+                        loop_list=loop_list,
                     )
                 return transport
             except TransportError as exc:
@@ -477,6 +558,64 @@ class AlertService:
 
         assert last_error is not None
         raise last_error
+
+    def _build_loop(
+        self,
+        alert: AlertRequest,
+        lead_path: Path,
+        webm_path: Path,
+    ) -> tuple[Path, float] | None:
+        if not alert.loop:
+            return None
+        alert_dir = Path(webm_path).parent
+        try:
+            body = audio.build_loop_wav(
+                lead_path,
+                alert_dir / "alert-loop.wav",
+                self.config.loop_gap_seconds,
+            )
+            body_seconds = max(1.0, audio.probe_duration(body))
+            repeats = max(1, int(LOOP_MAX_SECONDS / body_seconds))
+            listing = audio.build_loop_list(
+                lead_path,
+                body,
+                alert_dir / "alert-loop.ffconcat",
+                repeats,
+            )
+            return listing, body_seconds
+        except AudioError as exc:
+            log_event(
+                self.log,
+                logging.ERROR,
+                "audio.loop_failed",
+                "Sin bucle: el anuncio se transmite una sola vez",
+                alert_id=alert.id,
+                error=str(exc),
+            )
+            return None
+
+    def _watch_loop(
+        self,
+        alert: AlertRequest,
+        body_seconds: float,
+        active: _ActiveStream,
+    ) -> None:
+        def _run() -> None:
+            repeats = 0
+            while not active.stop.wait(body_seconds):
+                repeats += 1
+                log_event(
+                    self.log,
+                    logging.INFO,
+                    "alert.loop_repeat",
+                    "Bucle de alerta activo",
+                    alert_id=alert.id,
+                    repeats=repeats,
+                )
+
+        threading.Thread(
+            target=_run, name=f"loop-watch-{alert.id}", daemon=True
+        ).start()
 
     def _write_metadata(self, alert: AlertRequest, result: AlertResult) -> None:
         path = Path(result.artifact_dir) / "meta.json"
@@ -511,6 +650,8 @@ class AlertService:
             )
         if alert.kind not in VALID_KINDS:
             raise ValueError(f"kind debe ser uno de {VALID_KINDS}")
+        if alert.tone not in VALID_TONES:
+            raise ValueError(f"tone debe ser uno de {sorted(VALID_TONES)}")
         if alert.magnitude is not None and not 0 <= alert.magnitude <= 12:
             raise ValueError("magnitude debe estar entre 0 y 12")
         if len(alert.title) > 200:

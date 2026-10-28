@@ -81,8 +81,8 @@ def main() -> int:
         print(f"Icecast: {config.dj_host}:{config.dj_port}{mount}")
     print(
         f"Emitiendo un tono de {args.seconds:.1f}s a {args.frequency} Hz "
-        f"tras {config.lead_in_seconds:.1f}s de cama de timbre (LEAD_IN_SECONDS)"
-        f"{' y los 4 pings fuertes' if config.chime_enabled else ''}. "
+        f"tras {config.lead_in_seconds:.1f}s de cama suave (LEAD_IN_SECONDS)"
+        f"{'' if config.chime_enabled else ' en silencio (CHIME_ENABLED=false)'}. "
         "Se va a escuchar en la radio."
     )
 
@@ -94,7 +94,8 @@ def main() -> int:
                 tone_path,
                 config.lead_in_seconds,
                 Path(tmp) / "tone-lead.wav",
-                chime=config.chime_enabled,
+                tone="soft",
+                sound=config.chime_enabled,
             )
 
             if config.transport == "webdj":

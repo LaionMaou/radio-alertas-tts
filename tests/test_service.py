@@ -5,9 +5,10 @@ import time
 
 import pytest
 
+from radio_alerts_tts import service as service_module
 from radio_alerts_tts.config import load_config
 from radio_alerts_tts.models import AlertRequest, AlertResult
-from radio_alerts_tts.service import AlertService
+from radio_alerts_tts.service import AlertService, _ActiveStream
 
 
 def make_config(tmp_path, **overrides):
@@ -155,3 +156,83 @@ def test_rejects_out_of_range_magnitude(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="magnitude"):
         service.submit(AlertRequest(text="hola", magnitude=13))
+
+
+def test_rejects_unknown_tone(tmp_path) -> None:
+    service = AlertService(make_config(tmp_path), process_fn=fake_result)
+
+    with pytest.raises(ValueError, match="tone"):
+        service.submit(AlertRequest(text="hola", tone="sirena"))
+
+
+def test_stop_active_is_false_when_nothing_plays(tmp_path) -> None:
+    service = AlertService(make_config(tmp_path), process_fn=fake_result)
+
+    assert service.stop_active() is False
+
+
+def test_stop_active_cuts_the_stream_with_the_operator_reason(tmp_path) -> None:
+    service = AlertService(make_config(tmp_path), process_fn=fake_result)
+    active = _ActiveStream()
+    service._active = active
+
+    assert service.stop_active() is True
+    assert active.stop.is_set()
+    assert active.reason == "stopped"
+
+
+def test_preempt_cuts_the_stream_before_queueing(tmp_path) -> None:
+    service = AlertService(make_config(tmp_path), process_fn=fake_result)
+    active = _ActiveStream()
+    service._active = active
+
+    service.submit(AlertRequest(text="大津波警報", preempt=True))
+
+    assert active.stop.is_set()
+    assert active.reason == "preempted"
+
+
+def test_loop_body_is_the_alert_plus_the_gap(tmp_path, monkeypatch) -> None:
+    config = make_config(tmp_path, LOOP_GAP_SECONDS="4")
+    service = AlertService(config, process_fn=fake_result)
+    gaps: list[float] = []
+    listing: dict = {}
+
+    def fake_body(wav_path, output, gap_seconds):
+        gaps.append(gap_seconds)
+        return output
+
+    def fake_list(lead, body, output, repeats):
+        listing.update(lead=lead, body=body, repeats=repeats)
+        return output
+
+    monkeypatch.setattr(service_module.audio, "build_loop_wav", fake_body)
+    monkeypatch.setattr(service_module.audio, "probe_duration", lambda _path: 5.0)
+    monkeypatch.setattr(service_module.audio, "build_loop_list", fake_list)
+
+    result = service._build_loop(
+        AlertRequest(text="大津波警報", loop=True),
+        tmp_path / "alert.wav",
+        tmp_path / "alert.webm",
+    )
+
+    assert result == (tmp_path / "alert-loop.ffconcat", 5.0)
+    assert gaps == [4.0]
+    assert listing["lead"] == tmp_path / "alert.wav"
+    assert listing["repeats"] == service_module.LOOP_MAX_SECONDS // 5
+
+
+def test_without_loop_there_is_no_body(tmp_path, monkeypatch) -> None:
+    service = AlertService(make_config(tmp_path), process_fn=fake_result)
+    monkeypatch.setattr(
+        service_module.audio,
+        "build_loop_wav",
+        lambda *args, **kwargs: pytest.fail("no debe armarse un bucle"),
+    )
+
+    assert (
+        service._build_loop(
+            AlertRequest(text="hola"), tmp_path / "alert.wav", tmp_path / "alert.webm"
+        )
+        is None
+    )

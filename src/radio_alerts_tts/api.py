@@ -18,7 +18,7 @@ from . import __version__
 from .config import VALID_KINDS, Config, load_config
 from .errors import ConfigError
 from .logging_setup import force_utf8_stdio, setup_logging
-from .models import AlertRequest
+from .models import VALID_TONES, AlertRequest
 from .service import AlertService
 
 log = logging.getLogger("radio_alerts_tts")
@@ -30,6 +30,9 @@ class AlertIn(BaseModel):
     magnitude: float | None = Field(default=None, ge=0, le=12)
     title: str = Field(default="", max_length=200)
     dedupe_key: str = Field(default="", max_length=120)
+    tone: str = "soft"
+    loop: bool = False
+    preempt: bool = False
 
 
 def create_app(config: Config) -> FastAPI:
@@ -76,6 +79,8 @@ def create_app(config: Config) -> FastAPI:
                 422,
                 f"text supera el máximo de {config.max_text_chars} caracteres",
             )
+        if payload.tone not in VALID_TONES:
+            raise HTTPException(422, f"tone debe ser uno de {sorted(VALID_TONES)}")
 
         alert = AlertRequest(
             text=payload.text,
@@ -83,6 +88,9 @@ def create_app(config: Config) -> FastAPI:
             magnitude=payload.magnitude,
             title=payload.title,
             dedupe_key=payload.dedupe_key,
+            tone=payload.tone,
+            loop=payload.loop,
+            preempt=payload.preempt,
             source="api",
         )
 
@@ -102,6 +110,11 @@ def create_app(config: Config) -> FastAPI:
         if outcome.status == "duplicate":
             return JSONResponse(status_code=200, content=body)
         return JSONResponse(status_code=202, content=body)
+
+    @app.post("/stop", dependencies=[Depends(require_auth)])
+    def stop_alert():
+        stopped = service.stop_active()
+        return {"stopped": stopped, "status": "stopping" if stopped else "idle"}
 
     @app.get("/alert/{alert_id}", dependencies=[Depends(require_auth)])
     def get_alert(alert_id: str):

@@ -104,22 +104,21 @@ prueba se perdió el comienzo de un tono y en otra los 5 s iniciales salieron
 al aire tal cual.
 
 Con silencio eso es **aire muerto**, que en radio es peor que un corte. Por eso
-el tramo inicial va lleno de timbre y la secuencia transmitida es **cama de
-timbre → pings fuertes → anuncio**:
+el tramo inicial va lleno de audio: **arranque de `LEAD_IN_SECONDS` (3 s) →
+anuncio**. El contenido del arranque depende de la gravedad, elegida por el
+backend en el campo `tone` de `/alert`:
 
-- `LEAD_IN_SECONDS` (5 s por defecto) de cama: pings graves (440 Hz) cada
-  segundo, a nivel bajo, que no compiten con la voz.
-- 4 pings fuertes de campana (`CHIME_ENABLED`, 2 s) justo antes de la voz.
-- El anuncio.
+| `tone` | Cuándo | Audio |
+| --- | --- | --- |
+| `soft` (defecto) | EEW hasta 6強, 地震情報, tsunami `Warning`/`Watch` | Cama grave: 440 Hz, nivel 0.12, un ping por segundo |
+| `urgent` | EEW de 震度7 o más, 大津波警報 | 880 y 1175 Hz, niveles 0.4 y 0.25, un ping cada 0.3 s |
 
 El `alert.wav` original no se modifica; lo que se transmite queda como
-`alert-lead.wav`. La voz arranca ~7 s después de la conexión.
-
-La cama va **antes** de los pings a propósito: si la conmutación se come el
-comienzo, lo que se pierde es la cama y el oyente entra igual a los 4 pings,
-que son la señal de que empieza el anuncio. Con `CHIME_ENABLED=false` el
+`alert-lead.wav`. La voz arranca ~3 s después de la conexión, dentro de la
+ventana de conmutación medida: si la conmutación se come el comienzo, lo que se
+pierde es el arranque y la voz entra casi completa. Con `CHIME_ENABLED=false` el
 arranque queda en silencio (solo para pruebas); con `LEAD_IN_SECONDS=0` no hay
-arranque ni timbre.
+arranque.
 
 Tiene que ser **audio real en el archivo**, no un filtro (`adelay`, `concat`
 sobre `anullsrc`): con `-re`, ffmpeg adelanta lo que genera un filtro y lo
@@ -129,10 +128,51 @@ con 2 s de `adelay` tarda lo mismo en transmitirse que sin filtro (2,5 s en vez
 de 5 s), mientras que un WAV rellenado tarda 5 s.
 
 Si en una instalación concreta todavía se corta la primera palabra, subir el
-valor (6–7 s); si se siente demasiado timbre antes de la voz, bajarlo.
+valor (5–7 s); si el arranque se siente largo antes de la voz, bajarlo.
 
 El mismo WAV rellenado se usa para el fallback Icecast: comparte el mismo
 harbor y la misma latencia de conmutación.
+
+## Bucle de 大津波警報
+
+Una alerta con `loop` (y normalmente `preempt`) no cierra el socket al terminar:
+repite el anuncio hasta que un operador la corte o llegue otra alerta. La
+secuencia es **arranque → anuncio → `LOOP_GAP_SECONDS` de pausa → anuncio → …**;
+el repique no se repite, porque el bucle ya está en el aire.
+
+Un solo `ffmpeg` genera el contenedor entero:
+
+```
+ffmpeg -re -f concat -safe 0 -i alert-loop.ffconcat … -c:a libopus -f webm pipe:1
+```
+
+`alert-loop.ffconcat` lista el `alert-lead.wav` una vez y `alert-loop.wav` (voz
+más la pausa) muchas veces. **La lista es larga a propósito**: el demuxer
+`concat` conserva los timestamps, así que un único `-re` mantiene el ritmo real
+y el WebM queda continuo, sin cortes entre vueltas.
+
+Lo que **no** funciona, medido en local: el filtro `concat` con `-stream_loop -1`
+reinicia el reloj de `-re` en cada vuelta y transmite a **1.29×** realtime; el
+harbor se desborda y la alerta se corta o se distorsiona. La medición se hace
+contando paquetes Opus (`nb_read_packets` × 0.02 s) contra el reloj de pared: el
+bitrate no sirve porque Opus es variable (un seno a `-b:a 32k` sale a ~54 kbps).
+
+La lista cubre 24 h (`LOOP_MAX_SECONDS`). Es un tope de seguridad, no el
+comportamiento esperado: si alguien olvida el comando de stop, el bucle se
+detiene solo y el log `alert.loop_started` deja el comando a mano. Para
+cortarlo antes:
+
+```bash
+docker compose exec alerts-tts python -m radio_alerts_tts.cli stop
+```
+
+El comando hace `POST /stop` en `127.0.0.1` con el token del contenedor, así que
+la credencial no aparece en el shell. El corte mata el `ffmpeg` y cierra el
+socket: Liquidsoap vuelve al AutoDJ y el resultado queda `stopped`.
+
+Si llega otra alerta mientras el bucle suena, el bucle deja de enviar en el
+siguiente fragmento, la nueva alerta se procesa y el resultado del bucle queda
+`partial`. Si la nueva también pide `loop`, el bucle recomienza con su texto.
 
 ## Fallback Icecast
 

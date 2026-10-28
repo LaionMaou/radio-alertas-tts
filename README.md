@@ -194,6 +194,18 @@ curl -s -X POST http://127.0.0.1:8090/alert \
 | `magnitude` | number 0–12 | no | Se agrega al título |
 | `title` | string | no | Lugar o detalle, máx. 200 |
 | `dedupe_key` | string | no | Evita repetir la misma alerta |
+| `tone` | `soft` \| `urgent` | no | Arranque: cama grave (defecto) o repique estridente |
+| `loop` | boolean | no | Repite el anuncio hasta que se detenga o llegue otra alerta |
+| `preempt` | boolean | no | Corta el anuncio en curso antes de encolar esta |
+
+`tone` lo elige el backend por gravedad: `urgent` solo para EEW de 震度7 o más y
+para 大津波警報. El arranque dura `LEAD_IN_SECONDS` (3 s); con `CHIME_ENABLED=false`
+queda en silencio.
+
+`loop` y `preempt` se usan juntos para una 大津波警報: la alerta que esté sonando
+se corta, el anuncio se repite con `LOOP_GAP_SECONDS` de pausa entre vueltas y
+solo termina con `POST /stop` o cuando llega otra alerta (si también es de
+tsunami, el bucle recomienza con el texto nuevo).
 
 Respuestas:
 
@@ -204,7 +216,16 @@ Respuestas:
 | 200 | `duplicate` | Ya se procesó con esa `dedupe_key` |
 | 429 | `busy` | Hay una alerta en curso y `LATEST_WINS=false` |
 | 401 | — | Token ausente o incorrecto |
-| 422 | — | Texto vacío, demasiado largo o `kind` inválido |
+| 422 | — | Texto vacío, demasiado largo, `kind` o `tone` inválido |
+
+`POST /stop` requiere el mismo token, corta el anuncio en curso (incluido el
+bucle) y responde `{"stopped": true, "status": "stopping"}`, o
+`{"stopped": false, "status": "idle"}` si no había nada sonando. Con el socket
+cerrado, el AutoDJ retoma. Desde el VPS:
+
+```bash
+docker compose exec alerts-tts python -m radio_alerts_tts.cli stop
+```
 
 `GET /alert/{alert_id}` requiere el mismo token y devuelve el resultado completo
 de una alerta ya procesada (el mismo objeto que aparece en `last_alert`). Si el id
@@ -246,6 +267,10 @@ Todo va a stdout como líneas JSON (un objeto por línea). Eventos principales:
 | `transport.failed` | Falló un transporte |
 | `alert.completed` | Resultado final con todas las métricas |
 | `alert.duplicate` | Alerta descartada por `dedupe_key` |
+| `alert.stop_requested` | Un `preempt` o `/stop` cortó el anuncio en curso |
+| `alert.loop_started` | Arrancó un bucle; incluye el comando para detenerlo |
+| `alert.loop_repeat` | Una vuelta más del bucle (una línea por repetición) |
+| `audio.loop_failed` | No se pudo armar el bucle; el anuncio sale una vez |
 | `discord.sent` / `discord.*_error` | Estado de la notificación |
 
 ```bash
@@ -259,8 +284,12 @@ Los logs no incluyen contraseñas, token ni URL del webhook.
 Cada alerta deja `data/alerts/<id>/` con:
 
 - `alert.wav` — salida cruda de Kokoro (24 kHz mono).
-- `alert-lead.wav` — lo que se transmite: cama de timbre (`LEAD_IN_SECONDS`),
-  4 pings fuertes (`CHIME_ENABLED`) y el anuncio.
+- `alert-lead.wav` — lo que se transmite: arranque (`LEAD_IN_SECONDS`, `tone`) y
+  el anuncio. Con `CHIME_ENABLED=false` el arranque es silencio.
+- `alert-loop.wav` — solo en alertas con `loop`: el anuncio más
+  `LOOP_GAP_SECONDS` de pausa.
+- `alert-loop.ffconcat` — solo en alertas con `loop`: la lista que repite ese
+  WAV detrás del arranque.
 - `alert.webm` — WebM/Opus enviado (o generado en dry-run).
 - `meta.json` — alerta, resultado, configuración sin secretos, host y versión.
 
@@ -270,10 +299,12 @@ limpieza).
 ### Estados del resultado
 
 - `ok`: se entregó por el transporte configurado.
-- `partial`: se envió audio y la conexión falló después. **No** se reintenta
-  para no repetir la alerta desde el principio.
+- `partial`: se envió audio y la conexión falló después, o una alerta con
+  `preempt` lo cortó. **No** se reintenta para no repetir la alerta desde el
+  principio.
 - `failed`: no se envió audio. Se intentó el transporte alternativo si
   `ENABLE_ICECAST_FALLBACK=true`.
+- `stopped`: el operador cortó el anuncio con `POST /stop`.
 - `dry-run`: se generó audio pero no se transmitió.
 
 ### Fallback
@@ -289,7 +320,8 @@ Icecast contra `AZURACAST_DJ_HOST:AZURACAST_DJ_PORT`. `ICECAST_CODEC` elige
 | --- | --- | --- |
 | El WebSocket cierra al enviar `hello` | Credenciales o estación incorrectas | Usuario/clave del streamer y `AZURACAST_STATION_SHORT_NAME` |
 | `Connection refused` al puerto DJ | El puerto no es accesible desde el contenedor | `AZURACAST_DJ_HOST`, firewall, o ejecutar en el mismo VPS |
-| La alerta se corta al empezar | Liquidsoap todavía no conmutó al streamer | Subir `LEAD_IN_SECONDS` (6–7 s) |
+| La alerta se corta al empezar | Liquidsoap todavía no conmutó al streamer | Subir `LEAD_IN_SECONDS` (5–7 s) |
+| El bucle de tsunami no termina | Nadie corrió el comando de stop | `docker compose exec alerts-tts python -m radio_alerts_tts.cli stop` |
 | La alerta se corta al final | Cierre demasiado pronto | Subir `DRAIN_SECONDS` (2–3 s) |
 | El AutoDJ tarda en volver | Liquidsoap espera el cierre del harbor | Verificar que el proceso termine; revisar logs de AzuraCast |
 | Primer aviso lento | Modelo cargándose | Esperar `tts.model_ready` en `/health` o reiniciar antes de operar |
