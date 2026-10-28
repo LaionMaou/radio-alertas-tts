@@ -81,8 +81,8 @@ def main() -> int:
         print(f"Icecast: {config.dj_host}:{config.dj_port}{mount}")
     print(
         f"Emitiendo un tono de {args.seconds:.1f}s a {args.frequency} Hz "
-        f"tras {config.lead_in_seconds:.1f}s de silencio (LEAD_IN_SECONDS)"
-        f"{' y el timbre de 4 pings' if config.chime_enabled else ''}. "
+        f"tras {config.lead_in_seconds:.1f}s de cama de timbre (LEAD_IN_SECONDS)"
+        f"{' y los 4 pings fuertes' if config.chime_enabled else ''}. "
         "Se va a escuchar en la radio."
     )
 

@@ -411,7 +411,7 @@ class AlertService:
                 self.log,
                 logging.WARNING,
                 "audio.lead_in_failed",
-                "Sin silencio inicial: el anuncio puede perder el arranque",
+                "Sin arranque: puede cortarse el comienzo y sonar aire muerto",
                 alert_id=alert.id,
                 error=str(exc),
             )

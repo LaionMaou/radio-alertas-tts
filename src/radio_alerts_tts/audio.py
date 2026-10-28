@@ -28,6 +28,10 @@ CHIME_FREQUENCY_HZ = 880
 CHIME_LEVEL = 0.45
 CHIME_SECONDS = CHIME_PINGS * CHIME_PING_INTERVAL
 
+BED_FREQUENCY_HZ = 440
+BED_LEVEL = 0.12
+BED_PING_INTERVAL = 1.0
+
 
 def chime_source() -> str:
     """Fuente lavfi del timbre: `CHIME_PINGS` pings con caída exponencial."""
@@ -35,6 +39,19 @@ def chime_source() -> str:
         f"aevalsrc={CHIME_LEVEL}*sin(2*PI*{CHIME_FREQUENCY_HZ}*t)"
         f"*exp(-7*mod(t\\,{CHIME_PING_INTERVAL}))"
         f":s=48000:d={CHIME_SECONDS:g}"
+    )
+
+
+def bed_source(seconds: float) -> str:
+    """Cama suave para el arranque: un ping grave por segundo.
+
+    Lo que se envíe antes de la conmutación puede llegar a sonar en el aire,
+    así que este tramo va con timbre y no con silencio.
+    """
+    return (
+        f"aevalsrc={BED_LEVEL}*sin(2*PI*{BED_FREQUENCY_HZ}*t)"
+        f"*exp(-4*mod(t\\,{BED_PING_INTERVAL}))"
+        f":s=48000:d={seconds:g}"
     )
 
 
@@ -49,9 +66,10 @@ def build_pad_args(
     *,
     chime: bool = False,
 ) -> list[str]:
+    head = bed_source(seconds) if chime else "anullsrc=r=48000:cl=mono"
     args = [
         FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin",
-        "-f", "lavfi", "-t", f"{seconds:g}", "-i", "anullsrc=r=48000:cl=mono",
+        "-f", "lavfi", "-t", f"{seconds:g}", "-i", head,
     ]
     if chime:
         args += ["-f", "lavfi", "-i", chime_source()]
@@ -80,14 +98,15 @@ def add_lead_in(
     *,
     chime: bool = False,
 ) -> Path:
-    """Devuelve un WAV con silencio y timbre delante del anuncio.
+    """Devuelve un WAV con la cama de timbre y los pings delante del anuncio.
 
-    Liquidsoap tarda ~4 s en conmutar al streamer y lo ya bufferizado se
-    descarta, así que sin este colchón se pierde el comienzo del texto. El
-    timbre va **después** del silencio: si fuera primero, la conmutación se
-    lo comería.
+    Liquidsoap tarda 4-5 s en conmutar al streamer y lo ya bufferizado puede
+    descartarse o llegar a sonar; en ninguno de los dos casos queremos aire
+    muerto, así que el arranque va lleno de timbre. Los pings fuertes quedan al
+    final, justo antes de la voz: si la conmutación se come el comienzo, lo que
+    se pierde es cama, no la señal de que empieza el anuncio.
 
-    Tiene que ser un archivo real: con `-re`, ffmpeg adelanta el silencio que
+    Tiene que ser un archivo real: con `-re`, ffmpeg adelanta el audio que
     genera un filtro (adelay, concat sobre anullsrc) en lugar de transmitirlo a
     ritmo real, y el anuncio vuelve a caer en la ventana descartada.
     """

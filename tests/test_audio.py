@@ -3,10 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from radio_alerts_tts.audio import (
+    BED_LEVEL,
+    CHIME_LEVEL,
     CHIME_SECONDS,
     add_lead_in,
+    bed_source,
     build_pad_args,
     build_webm_args,
+    chime_source,
     gain_filter,
 )
 
@@ -44,7 +48,7 @@ def test_add_lead_in_is_a_noop_without_seconds() -> None:
     assert add_lead_in(WAV, 0.0, Path("lead.wav")) == WAV
 
 
-def test_pad_args_prepend_real_silence_to_the_alert() -> None:
+def test_pad_args_prepend_real_silence_when_the_chime_is_off() -> None:
     args = build_pad_args(WAV, 5.0, Path("lead.wav"))
     joined = " ".join(args)
 
@@ -57,14 +61,21 @@ def test_pad_args_prepend_real_silence_to_the_alert() -> None:
     )
 
 
-def test_pad_args_put_the_chime_after_the_silence() -> None:
+def test_pad_args_fill_the_head_with_the_bed_and_end_with_the_chime() -> None:
     args = build_pad_args(WAV, 5.0, Path("lead.wav"), chime=True)
     graph = args[args.index("-filter_complex") + 1]
+    joined = " ".join(args)
 
-    assert any(arg.startswith("aevalsrc=") for arg in args)
+    assert bed_source(5.0) in args
+    assert chime_source() in args
+    assert "anullsrc" not in joined, (
+        "el arranque no puede ser silencio: si la conmutación llega antes, esos "
+        "segundos se transmiten como aire muerto"
+    )
     assert "concat=n=3:v=0:a=1" in graph
     assert "[a0][a1][a2]concat" in graph, (
-        "orden: silencio (0), timbre (1), anuncio (2); si el timbre va primero "
-        "la conmutación de Liquidsoap se lo come"
+        "orden: cama (0), pings fuertes (1), anuncio (2); si los pings van "
+        "primero la conmutación de Liquidsoap se los come"
     )
+    assert BED_LEVEL < CHIME_LEVEL
     assert CHIME_SECONDS == 2.0

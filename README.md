@@ -259,8 +259,8 @@ Los logs no incluyen contraseñas, token ni URL del webhook.
 Cada alerta deja `data/alerts/<id>/` con:
 
 - `alert.wav` — salida cruda de Kokoro (24 kHz mono).
-- `alert-lead.wav` — lo que se transmite: silencio (`LEAD_IN_SECONDS`), timbre
-  de 4 pings (`CHIME_ENABLED`) y el anuncio.
+- `alert-lead.wav` — lo que se transmite: cama de timbre (`LEAD_IN_SECONDS`),
+  4 pings fuertes (`CHIME_ENABLED`) y el anuncio.
 - `alert.webm` — WebM/Opus enviado (o generado en dry-run).
 - `meta.json` — alerta, resultado, configuración sin secretos, host y versión.
 
