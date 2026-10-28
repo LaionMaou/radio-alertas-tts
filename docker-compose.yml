@@ -1,0 +1,38 @@
+services:
+  alerts-tts:
+    build:
+      context: .
+    image: kuma/radio-alerts-tts:0.1.0
+    container_name: kuma-alerts-tts
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+    ports:
+      - "127.0.0.1:${API_PORT:-8090}:${API_PORT:-8090}"
+    volumes:
+      - ./data:/data
+    # Red compartida con el backend de alertas P2P/JMA.
+    # Crear una vez: docker network create radio-alerts
+    networks:
+      - default
+      - radio-alerts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Kokoro usa varios hilos; con 2 CPUs una alerta puede tardar demasiado.
+    # Ajustar después de medir el RTF en el VPS (scripts/benchmark_tts.py).
+    cpus: "3.0"
+    mem_limit: 2g
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  radio-alerts:
+    external: true
+    name: radio-alerts
