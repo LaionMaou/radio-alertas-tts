@@ -22,6 +22,94 @@ def gain_filter(gain_db: float) -> str | None:
     return f"volume={gain_db}dB,alimiter=limit=0.95"
 
 
+CHIME_PINGS = 4
+CHIME_PING_INTERVAL = 0.5
+CHIME_FREQUENCY_HZ = 880
+CHIME_LEVEL = 0.45
+CHIME_SECONDS = CHIME_PINGS * CHIME_PING_INTERVAL
+
+
+def chime_source() -> str:
+    """Fuente lavfi del timbre: `CHIME_PINGS` pings con caída exponencial."""
+    return (
+        f"aevalsrc={CHIME_LEVEL}*sin(2*PI*{CHIME_FREQUENCY_HZ}*t)"
+        f"*exp(-7*mod(t\\,{CHIME_PING_INTERVAL}))"
+        f":s=48000:d={CHIME_SECONDS:g}"
+    )
+
+
+def _mono_input(index: int) -> str:
+    return f"[{index}:a]aformat=sample_rates=48000:channel_layouts=mono[a{index}];"
+
+
+def build_pad_args(
+    wav_path: Path,
+    seconds: float,
+    output: Path,
+    *,
+    chime: bool = False,
+) -> list[str]:
+    args = [
+        FFMPEG, "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-f", "lavfi", "-t", f"{seconds:g}", "-i", "anullsrc=r=48000:cl=mono",
+    ]
+    if chime:
+        args += ["-f", "lavfi", "-i", chime_source()]
+    args += ["-i", str(wav_path)]
+
+    speech_index = 2 if chime else 1
+    graph = _mono_input(0)
+    if chime:
+        graph += _mono_input(1)
+    graph += _mono_input(speech_index)
+    labels = "".join(f"[a{i}]" for i in range(speech_index + 1))
+    graph += f"{labels}concat=n={speech_index + 1}:v=0:a=1[a]"
+
+    return args + [
+        "-filter_complex", graph,
+        "-map", "[a]",
+        "-c:a", "pcm_s16le", "-ac", "1", "-ar", "48000",
+        str(output),
+    ]
+
+
+def add_lead_in(
+    wav_path: Path,
+    seconds: float,
+    output: Path,
+    *,
+    chime: bool = False,
+) -> Path:
+    """Devuelve un WAV con silencio y timbre delante del anuncio.
+
+    Liquidsoap tarda ~4 s en conmutar al streamer y lo ya bufferizado se
+    descarta, así que sin este colchón se pierde el comienzo del texto. El
+    timbre va **después** del silencio: si fuera primero, la conmutación se
+    lo comería.
+
+    Tiene que ser un archivo real: con `-re`, ffmpeg adelanta el silencio que
+    genera un filtro (adelay, concat sobre anullsrc) en lugar de transmitirlo a
+    ritmo real, y el anuncio vuelve a caer en la ventana descartada.
+    """
+    if seconds <= 0:
+        return wav_path
+
+    try:
+        result = subprocess.run(
+            build_pad_args(wav_path, seconds, output, chime=chime),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AudioError("ffmpeg excedió el tiempo al preparar el arranque") from exc
+
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        raise AudioError("ffmpeg falló al preparar el arranque: " + " | ".join(detail[-3:]))
+    return output
+
+
 def build_webm_args(
     wav_path: Path,
     bitrate: str,

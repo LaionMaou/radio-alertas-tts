@@ -150,6 +150,38 @@ def test_invalid_voice_rejected(tmp_path) -> None:
         )
 
 
+def test_lead_in_defaults_and_can_be_disabled(tmp_path) -> None:
+    default = load_config({"DRY_RUN": "true", "DATA_DIR": str(tmp_path)})
+    assert default.lead_in_seconds == 5.0
+
+    disabled = load_config(
+        {"DRY_RUN": "true", "LEAD_IN_SECONDS": "0", "DATA_DIR": str(tmp_path)}
+    )
+    assert disabled.lead_in_seconds == 0.0
+
+
+def test_chime_is_on_by_default_and_can_be_disabled(tmp_path) -> None:
+    default = load_config({"DRY_RUN": "true", "DATA_DIR": str(tmp_path)})
+    assert default.chime_enabled is True
+
+    disabled = load_config(
+        {"DRY_RUN": "true", "CHIME_ENABLED": "false", "DATA_DIR": str(tmp_path)}
+    )
+    assert disabled.chime_enabled is False
+
+
+def test_lead_in_out_of_range_rejected(tmp_path) -> None:
+    for value in ("-1", "16"):
+        with pytest.raises(ConfigError, match="LEAD_IN_SECONDS"):
+            load_config(
+                {
+                    "DRY_RUN": "true",
+                    "LEAD_IN_SECONDS": value,
+                    "DATA_DIR": str(tmp_path),
+                }
+            )
+
+
 def test_safe_summary_hides_secrets(tmp_path) -> None:
     config = load_config({**LIVE_ENV, "DATA_DIR": str(tmp_path)})
     summary = json.dumps(config.safe_summary(), ensure_ascii=False)

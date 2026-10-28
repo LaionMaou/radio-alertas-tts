@@ -16,6 +16,7 @@ VALID_CODECS = ("opus", "mp3")
 VALID_VOICES = ("jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo")
 
 MAX_TEXT_HARD_LIMIT = 600
+MAX_LEAD_IN_SECONDS = 15
 
 
 def _get(env: Mapping[str, str], key: str, default: str = "") -> str:
@@ -94,6 +95,8 @@ class Config:
     icecast_codec: str = "opus"
     enable_icecast_fallback: bool = True
     drain_seconds: float = 1.5
+    lead_in_seconds: float = 5.0
+    chime_enabled: bool = True
     open_timeout: float = 10.0
 
     tts_voice: str = "jf_alpha"
@@ -144,6 +147,8 @@ class Config:
             "transport": self.transport,
             "icecast_codec": self.icecast_codec,
             "enable_icecast_fallback": self.enable_icecast_fallback,
+            "lead_in_seconds": self.lead_in_seconds,
+            "chime_enabled": self.chime_enabled,
             "tts_voice": self.tts_voice,
             "tts_speed": self.tts_speed,
             "audio_bitrate": self.audio_bitrate,
@@ -175,6 +180,8 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         icecast_codec=_get(source, "ICECAST_CODEC", "opus").lower(),
         enable_icecast_fallback=_get_bool(source, "ENABLE_ICECAST_FALLBACK", True),
         drain_seconds=_get_float(source, "DRAIN_SECONDS", 1.5),
+        lead_in_seconds=_get_float(source, "LEAD_IN_SECONDS", 5.0),
+        chime_enabled=_get_bool(source, "CHIME_ENABLED", True),
         open_timeout=_get_float(source, "OPEN_TIMEOUT_SECONDS", 10.0),
         tts_voice=_get(source, "TTS_VOICE", "jf_alpha"),
         tts_speed=_get_float(source, "TTS_SPEED", 1.0),
@@ -216,6 +223,8 @@ def validate_config(config: Config) -> None:
         raise ConfigError(f"MAX_TEXT_CHARS debe estar entre 1 y {MAX_TEXT_HARD_LIMIT}")
     if config.drain_seconds < 0:
         raise ConfigError("DRAIN_SECONDS no puede ser negativo")
+    if not 0 <= config.lead_in_seconds <= MAX_LEAD_IN_SECONDS:
+        raise ConfigError(f"LEAD_IN_SECONDS debe estar entre 0 y {MAX_LEAD_IN_SECONDS}")
 
     if config.ws_url_override and not config.ws_url_override.startswith(("ws://", "wss://")):
         raise ConfigError("AZURACAST_WS_URL debe empezar con ws:// o wss://")

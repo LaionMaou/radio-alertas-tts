@@ -17,7 +17,7 @@ from typing import Callable
 
 from . import __version__, audio, icecast, notifier, tts, webdj
 from .config import VALID_KINDS, Config
-from .errors import TransportError
+from .errors import AudioError, TransportError
 from .logging_setup import log_event
 from .models import KIND_TITLES, AlertRequest, AlertResult, SubmitOutcome
 
@@ -307,8 +307,9 @@ class AlertService:
                     webm=str(webm_path),
                 )
             else:
+                stream_wav = self._with_lead_in(alert, wav_path, alert_dir)
                 t0 = time.perf_counter()
-                transport = self._stream(alert, wav_path, webm_path, audio_seconds)
+                transport = self._stream(alert, stream_wav, webm_path, audio_seconds)
                 stream_seconds = time.perf_counter() - t0
                 sent_audio = True
                 status = "ok"
@@ -393,6 +394,28 @@ class AlertService:
             notify_ok=result.notify_ok,
         )
         return result
+
+    def _with_lead_in(self, alert: AlertRequest, wav_path: Path, alert_dir: Path) -> Path:
+        seconds = self.config.lead_in_seconds
+        if seconds <= 0:
+            return wav_path
+        try:
+            return audio.add_lead_in(
+                wav_path,
+                seconds,
+                alert_dir / "alert-lead.wav",
+                chime=self.config.chime_enabled,
+            )
+        except AudioError as exc:
+            log_event(
+                self.log,
+                logging.WARNING,
+                "audio.lead_in_failed",
+                "Sin silencio inicial: el anuncio puede perder el arranque",
+                alert_id=alert.id,
+                error=str(exc),
+            )
+            return wav_path
 
     def _stream(
         self,

@@ -93,6 +93,40 @@ corta o se reproduce con saltos. Por eso:
 La conexión se mantiene abierta `DRAIN_SECONDS` después del último byte para
 que el harbor reproduzca el final antes del cierre.
 
+## Silencio inicial (`LEAD_IN_SECONDS`)
+
+El `input.harbor` de Liquidsoap no arranca a reproducir en el instante en que
+llega la fuente: llena su buffer y recién entonces la transición conmuta
+(`Switch to input_streamer`). Medido contra AzuraCast, ese cambio ocurre unos
+**4 s** después de la conexión, y **lo que ya estaba en el buffer se descarta**
+para no agregar latencia a una fuente supuestamente en vivo. Sin protección, un
+tono de 6 s sonó solo desde el segundo 4: el comienzo del anuncio se pierde.
+
+Por eso antes de transmitir se genera un WAV con la secuencia **silencio →
+timbre → anuncio**: `LEAD_IN_SECONDS` (5 s por defecto) de silencio real que
+consume la conmutación, después un timbre de 4 pings de campana
+(`CHIME_ENABLED`, 2 s) y recién ahí la voz. El `alert.wav` original no se
+modifica; el archivo con el arranque queda junto a él como `alert-lead.wav`.
+La voz arranca entonces ~7 s después de la conexión.
+
+El timbre va **después** del silencio a propósito: si fuera lo primero, la
+conmutación lo descartaría y solo se escucharían los últimos pings. Con
+`CHIME_ENABLED=false` queda solo el silencio; con `LEAD_IN_SECONDS=0` no hay
+arranque ni timbre.
+
+Tiene que ser **silencio real en el archivo**, no un filtro (`adelay`,
+`concat` sobre `anullsrc`): con `-re`, ffmpeg adelanta el silencio generado por
+un filtro y lo escribe apenas arranca en lugar de transmitirlo a ritmo real, así
+que el texto vuelve a caer dentro de la ventana que se descarta. Comprobado:
+un tono de 3 s con 2 s de `adelay` tarda lo mismo en transmitirse que sin
+filtro (2,5 s en vez de 5 s), mientras que un WAV rellenado tarda 5 s.
+
+Si en una instalación concreta todavía se corta la primera palabra, subir el
+valor (6–7 s); si sobra silencio perceptible, bajarlo.
+
+El mismo WAV rellenado se usa para el fallback Icecast: comparte el mismo
+harbor y la misma latencia de conmutación.
+
 ## Fallback Icecast
 
 El mismo `input.harbor` acepta fuentes Icecast/SHOUTcast en el puerto DJ. Si el

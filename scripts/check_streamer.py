@@ -80,7 +80,9 @@ def main() -> int:
         mount = "/" + config.dj_mount.lstrip("/")
         print(f"Icecast: {config.dj_host}:{config.dj_port}{mount}")
     print(
-        f"Emitiendo un tono de {args.seconds:.1f}s a {args.frequency} Hz. "
+        f"Emitiendo un tono de {args.seconds:.1f}s a {args.frequency} Hz "
+        f"tras {config.lead_in_seconds:.1f}s de silencio (LEAD_IN_SECONDS)"
+        f"{' y el timbre de 4 pings' if config.chime_enabled else ''}. "
         "Se va a escuchar en la radio."
     )
 
@@ -88,12 +90,18 @@ def main() -> int:
         with TemporaryDirectory() as tmp:
             tone_path = Path(tmp) / "tone.wav"
             make_tone(tone_path, args.seconds, args.frequency)
+            stream_path = audio.add_lead_in(
+                tone_path,
+                config.lead_in_seconds,
+                Path(tmp) / "tone-lead.wav",
+                chime=config.chime_enabled,
+            )
 
             if config.transport == "webdj":
                 webdj.stream(
                     config,
                     audio.iter_webm_chunks(
-                        tone_path,
+                        stream_path,
                         bitrate=config.audio_bitrate,
                         gain_db=config.audio_gain_db,
                     ),
@@ -102,9 +110,9 @@ def main() -> int:
                 )
             else:
                 icecast.stream(
-                    tone_path,
+                    stream_path,
                     config,
-                    timeout_seconds=args.seconds + 60,
+                    timeout_seconds=args.seconds + config.lead_in_seconds + 60,
                 )
     except TransportError as exc:
         print(f"ERROR de transporte: {exc}")

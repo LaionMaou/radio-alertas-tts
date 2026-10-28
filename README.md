@@ -259,6 +259,8 @@ Los logs no incluyen contraseñas, token ni URL del webhook.
 Cada alerta deja `data/alerts/<id>/` con:
 
 - `alert.wav` — salida cruda de Kokoro (24 kHz mono).
+- `alert-lead.wav` — lo que se transmite: silencio (`LEAD_IN_SECONDS`), timbre
+  de 4 pings (`CHIME_ENABLED`) y el anuncio.
 - `alert.webm` — WebM/Opus enviado (o generado en dry-run).
 - `meta.json` — alerta, resultado, configuración sin secretos, host y versión.
 
@@ -287,6 +289,7 @@ Icecast contra `AZURACAST_DJ_HOST:AZURACAST_DJ_PORT`. `ICECAST_CODEC` elige
 | --- | --- | --- |
 | El WebSocket cierra al enviar `hello` | Credenciales o estación incorrectas | Usuario/clave del streamer y `AZURACAST_STATION_SHORT_NAME` |
 | `Connection refused` al puerto DJ | El puerto no es accesible desde el contenedor | `AZURACAST_DJ_HOST`, firewall, o ejecutar en el mismo VPS |
+| La alerta se corta al empezar | Liquidsoap todavía no conmutó al streamer | Subir `LEAD_IN_SECONDS` (6–7 s) |
 | La alerta se corta al final | Cierre demasiado pronto | Subir `DRAIN_SECONDS` (2–3 s) |
 | El AutoDJ tarda en volver | Liquidsoap espera el cierre del harbor | Verificar que el proceso termine; revisar logs de AzuraCast |
 | Primer aviso lento | Modelo cargándose | Esperar `tts.model_ready` en `/health` o reiniciar antes de operar |
