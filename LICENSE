@@ -1,0 +1,38 @@
+Copyright (c) 2026 FF Argentum. Todos los derechos reservados.
+All rights reserved.
+
+Este software, su código fuente y su documentación (el "Software") son
+propiedad exclusiva de FF Argentum. Es un desarrollo propio, no un proyecto de
+código abierto. Se entrega únicamente para su uso por parte de FF Argentum y de
+las personas o entidades que hayan recibido autorización expresa y por escrito.
+
+Queda prohibido, sin autorización previa y por escrito de FF Argentum:
+
+1. Copiar o reproducir el Software, en todo o en parte.
+2. Distribuirlo, publicarlo, subirlo a repositorios públicos o ponerlo a
+   disposición de terceros por cualquier medio.
+3. Modificarlo, traducirlo o crear obras derivadas.
+4. Usarlo para operar un servicio de alertas para terceros.
+5. Sublicenciarlo, venderlo, alquilarlo o cederlo.
+
+No se concede ninguna licencia sobre marcas, nombres comerciales o logotipos de
+FF Argentum.
+
+Las dependencias y componentes de terceros que el Software utiliza o integra
+—entre ellos Kokoro y sus modelos de voz, ffmpeg, FastAPI, AzuraCast y las
+bibliotecas listadas en `requirements.txt`— conservan sus propias licencias y
+condiciones. Esta licencia no las reemplaza ni amplía los derechos que ellas
+conceden sobre esos componentes. El audio sintetizado se genera localmente con
+esos componentes y no con servicios comerciales de síntesis de voz.
+
+El Software se proporciona "tal cual", sin garantías de ningún tipo, expresas o
+implícitas, incluidas las de comerciabilidad e idoneidad para un fin
+determinado. En ningún caso FF Argentum será responsable de daños directos,
+indirectos, incidentales, especiales o consecuentes derivados del uso o de la
+imposibilidad de uso del Software, incluidos los daños derivados de la
+interrupción de la transmisión o de una locución fallida.
+
+Para solicitar autorización de uso, contactar al titular del repositorio.
+
+No part of this software may be copied, modified, distributed or used without
+prior written permission from FF Argentum.

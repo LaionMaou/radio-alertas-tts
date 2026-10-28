@@ -1,5 +1,10 @@
 # Radio Alerts TTS
 
+**© 2026 FF Argentum. Todos los derechos reservados.**
+Software propietario de FF Argentum, desarrollo propio. No es código abierto:
+no se puede copiar, redistribuir ni reutilizar sin autorización previa y por
+escrito. Ver [LICENSE](LICENSE).
+
 Cadena independiente de alertas por voz para la radio en vivo de AzuraCast.
 Recibe un texto, lo sintetiza en japonés con **Kokoro** (offline), lo inyecta
 en la transmisión por el **WebDJ** y avisa a **Discord**. Si el WebSocket falla
@@ -389,3 +394,15 @@ En Windows, activar con `.venv\Scripts\activate`.
 - No usa la API de administración de AzuraCast en tiempo de ejecución.
 - No usa ElevenLabs ni ningún servicio TTS comercial.
 - No abre un navegador.
+
+## Licencia
+
+Software propietario de FF Argentum, © 2026. Todos los derechos reservados.
+
+Este es un desarrollo propio y no un proyecto de código abierto. No se permite
+copiar, modificar, publicar, redistribuir ni usar el código, la documentación o
+los recursos gráficos sin autorización previa y por escrito de FF Argentum. El
+texto completo está en [LICENSE](LICENSE).
+
+Las dependencias de terceros (Kokoro y sus modelos, ffmpeg, FastAPI, AzuraCast)
+mantienen sus propias licencias; esta no las reemplaza.
